@@ -1,11 +1,10 @@
 import fs from 'fs';
 import WavEncoder from 'wav-encoder';
-import { TokiModel } from './model';
+import { SuliModel } from './suli';
+import { WasoModel } from './waso';
+import yargs from 'yargs';
 
-const fname = process.argv[2];
-const stats = fs.statSync(fname, { throwIfNoEntry: false });
-const input = (stats && stats.isFile()) ? 
-  fs.readFileSync(process.argv[2]).toString('utf8').split('\n').map(s => s.trim()) : [fname];
+const models = ["suli", "waso"] as const;
 
 function preprocess(l: string): string {
   return l.split(/\s+/g).map(w=> {
@@ -15,13 +14,26 @@ function preprocess(l: string): string {
   }).join('');
 }
 
-const sampleRate = 44100;
+async function main(){
+  const argv = await yargs(process.argv.slice(2)).options({
+    split: { type: 'boolean', default: false },
+    model: { alias: 'm', choices: models, default: 'suli' },
+    i: { type: 'string', demandOption: true },
+  }).argv;
 
-if (process.argv[3] === 'split') {
-  (async()=> {
+  const fname = argv.i;
+  const stats = fs.statSync(fname, { throwIfNoEntry: false });
+  const input = (stats && stats.isFile()) ? 
+    fs.readFileSync(fname).toString('utf8').split('\n').map(s => s.trim()) : [fname];
+
+  const sampleRate = 44100;
+  const model = argv.m === 'suli' ? SuliModel : WasoModel;
+  console.error(`Using model "${argv.m}".`);
+
+  if (argv.split) {
     for (const line of input) {
       const text = preprocess(line);
-      const [PCM] = TokiModel.synthesize({ text, settings: { sampleRate } });
+      const [PCM] = model.synthesize({ text, settings: { sampleRate } });
 
       const buffer = await WavEncoder.encode({
         sampleRate,
@@ -30,15 +42,16 @@ if (process.argv[3] === 'split') {
       console.log(`${line}.wav`);
       fs.writeFileSync(`${line}.wav`, new Uint8Array(buffer));
     }
-  })();
-} else {
-  const text = input.map(preprocess).join(' ');
-  const [PCM] = TokiModel.synthesize({ text, settings: { sampleRate } });
+  } else {
+    const text = input.map(preprocess).join(' ');
+    const [PCM] = model.synthesize({ text, settings: { sampleRate } });
 
-  WavEncoder.encode({
-    sampleRate,
-    channelData: [PCM as Float32Array],
-  }).then((buffer: ArrayBuffer) => {
+    const buffer = await WavEncoder.encode({
+      sampleRate,
+      channelData: [PCM as Float32Array],
+    });
     process.stdout.write(new Uint8Array(buffer));
-  });
+  }
 }
+
+main();
